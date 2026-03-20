@@ -1,3 +1,6 @@
+import argparse
+import csv
+import glob
 import requests
 import img2pdf
 import os
@@ -13,7 +16,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configuration
+# Configuration (used when not in --all mode)
 EBOOK_ID = "188"
 BASE_URL = f"https://bhumikaprakashan.com/uploads/ebook/ebook-{EBOOK_ID}/"
 FLIPBOOK_URL = f"https://bhumikaprakashan.com/myebook2/{EBOOK_ID}"
@@ -114,23 +117,29 @@ def print_book_summary(book_title, total_pages, ebook_id):
     logger.info("🚀 Starting download process...")
     logger.info("=" * 60)
 
-def download_book():
-    """Download flipbook pages using discovered URL pattern"""
-    logger.info("🚀 Starting Bhumika Prakashan Flipbook Downloader")
+def download_book(ebook_id: str, output_dir: str = ".", interactive: bool = True):
+    """Download a single flipbook by ebook_id into output_dir"""
+    global OUTPUT_FILENAME
+    logger.info(f"🚀 Starting download for ebook ID: {ebook_id}")
     logger.info("=" * 60)
     
     # Step 1: Get book info (title and page count)
     logger.info("📊 STEP 1: Getting book info...")
-    book_title, total_pages = get_book_info(EBOOK_ID)
-    global OUTPUT_FILENAME
-    OUTPUT_FILENAME = f"{book_title}.pdf"
+    book_title, total_pages = get_book_info(ebook_id)
+    OUTPUT_FILENAME = os.path.join(output_dir, f"{book_title}.pdf")
+    
+    # Skip if PDF already exists
+    if os.path.exists(OUTPUT_FILENAME):
+        logger.info(f"✅ PDF already exists: {OUTPUT_FILENAME}")
+        logger.info("⏭️ Skipping download.")
+        return
     
     # Print book summary
-    print_book_summary(book_title, total_pages, EBOOK_ID)
+    print_book_summary(book_title, total_pages, ebook_id)
     
     # Step 2: Prepare download directory
     logger.info("📁 STEP 2: Preparing download directory...")
-    temp_dir = "temp_pages"
+    temp_dir = os.path.join(output_dir, f"temp_pages_{ebook_id}")
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
         logger.info(f"✓ Created directory: {temp_dir}")
@@ -140,7 +149,8 @@ def download_book():
     # Step 3: Download all pages
     logger.info("📥 STEP 3: Downloading pages...")
     logger.info(f"📚 Total pages to download: {total_pages}")
-    logger.info(f"📁 Using URL pattern: {BASE_URL}[page_number].jpg")
+    base_url = f"https://bhumikaprakashan.com/uploads/ebook/ebook-{ebook_id}/"
+    logger.info(f"📁 Using URL pattern: {base_url}[page_number].jpg")
     
     images = []
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -150,7 +160,7 @@ def download_book():
     start_time = time.time()
     
     for i in range(1, total_pages + 1):
-        page_url = f"{BASE_URL}{i}.jpg"
+        page_url = f"{base_url}{i}.jpg"
         img_path = f"{temp_dir}/page_{i:04d}.jpg"
         
         logger.info(f"📄 Downloading page {i:03d}/{total_pages}: {page_url}")
@@ -215,23 +225,131 @@ def download_book():
             
             # Step 5: Cleanup
             logger.info("🗑️  STEP 5: Cleanup...")
-            cleanup = input("\nDelete temporary images? (y/n): ").lower()
-            if cleanup == 'y':
+            if interactive:
+                cleanup = input("\nDelete temporary images for this book? (y/n): ").lower()
+                if cleanup == 'y':
+                    for img in images:
+                        os.remove(img)
+                    os.rmdir(temp_dir)
+                    logger.info("🧹 Temporary files cleaned up")
+                else:
+                    logger.info(f"📁 Temporary files kept in {temp_dir}/")
+            else:
+                # non-interactive: auto-cleanup
                 for img in images:
                     os.remove(img)
                 os.rmdir(temp_dir)
-                logger.info("🧹 Temporary files cleaned up")
-            else:
-                logger.info(f"📁 Temporary files kept in {temp_dir}/")
+                logger.info("🧹 Temporary files cleaned up automatically")
                 
         except Exception as e:
             logger.error(f"❌ PDF conversion failed: {e}")
     else:
         logger.error("❌ No valid images were downloaded!")
 
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description="Download Bhumika Prakashan flipbooks. Use --all with a CSV to download many books sequentially."
+    )
+    p.add_argument("--all", action="store_true", help="Download all books listed in a CSV")
+    p.add_argument("--all-grades", action="store_true", help="Download all books from all grade CSVs in catalog_output/")
+    p.add_argument("--csv-path", type=str, default="catalog_output/grade_5.csv", help="CSV with ebook_id,title columns")
+    p.add_argument("--output-dir", type=str, default="downloads", help="Directory to save PDFs")
+    p.add_argument("--id", type=str, default=None, help="Download a single ebook ID (overrides --all)")
+    return p.parse_args()
+
+
+def download_all_from_csv(csv_path: str, base_output_dir: str):
+    if not os.path.exists(csv_path):
+        logger.error(f"CSV file not found: {csv_path}")
+        return
+
+    # Infer grade from CSV filename to create consistent subfolder
+    fname = os.path.basename(csv_path)
+    grade_match = re.search(r"grade_(\d+)\.csv", fname, re.IGNORECASE)
+    if grade_match:
+        grade_num = grade_match.group(1)
+        grade_label = f"class_{grade_num}"
+        output_dir = os.path.join(base_output_dir, grade_label)
+        logger.info(f"Inferred grade from CSV: {grade_label}")
+    else:
+        # Fallback: use class_uncategorized for non-grade CSVs
+        grade_label = "class_uncategorized"
+        output_dir = os.path.join(base_output_dir, grade_label)
+        logger.info(f"Could not infer grade from CSV; using folder: {output_dir}")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    logger.info(f"Found {len(rows)} books in {csv_path}")
+
+    for i, row in enumerate(rows, 1):
+        ebook_id = row.get("ebook_id", "").strip()
+        title = row.get("title", "").strip()
+        logger.info(f"\n{'='*60}")
+        logger.info(f"📚 Book {i}/{len(rows)}: {title} (ID {ebook_id})")
+        logger.info(f"{'='*60}")
+
+        if not ebook_id:
+            logger.warning("Skipping row with empty ebook_id")
+            continue
+
+        try:
+            download_book(ebook_id, output_dir, interactive=False)
+        except Exception as e:
+            logger.error(f"Failed to download ID {ebook_id}: {e}")
+            continue
+
+
+def download_all_grades(base_output_dir: str):
+    catalog_dir = "catalog_output"
+    if not os.path.isdir(catalog_dir):
+        logger.error(f"catalog_output folder not found: {catalog_dir}")
+        return
+
+    # Find all grade_*.csv files
+    pattern = os.path.join(catalog_dir, "grade_*.csv")
+    csv_files = sorted(glob.glob(pattern))
+    if not csv_files:
+        logger.error("No grade_*.csv files found in catalog_output/")
+        return
+
+    logger.info(f"Found grade CSVs: {[os.path.basename(p) for p in csv_files]}")
+
+    for csv_path in csv_files:
+        # Extract grade name from filename, e.g. grade_5.csv -> class_5
+        fname = os.path.basename(csv_path)
+        grade_match = re.search(r"grade_(\d+)\.csv", fname, re.IGNORECASE)
+        if not grade_match:
+            logger.warning(f"Skipping unexpected CSV: {fname}")
+            continue
+        grade_num = grade_match.group(1)
+        grade_label = f"class_{grade_num}"
+        output_dir = os.path.join(base_output_dir, grade_label)
+
+        logger.info(f"\n{'='*60}")
+        logger.info(f"📚 Processing {grade_label} from {fname}")
+        logger.info(f"📁 Output folder: {output_dir}")
+        logger.info(f"{'='*60}")
+
+        download_all_from_csv(csv_path, base_output_dir)
+
+
 if __name__ == "__main__":
+    args = parse_args()
+
     try:
-        download_book()
+        if args.id:
+            download_book(args.id, args.output_dir, interactive=True)
+        elif args.all:
+            download_all_from_csv(args.csv_path, args.output_dir)
+        elif args.all_grades:
+            download_all_grades(args.output_dir)
+        else:
+            # legacy behavior: use hardcoded EBOOK_ID
+            download_book(EBOOK_ID, ".", interactive=True)
     except KeyboardInterrupt:
         logger.warning("\n⏹️  Download interrupted by user")
     except Exception as e:
