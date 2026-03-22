@@ -1,0 +1,7 @@
+Grade Summary: class_uncategorized
+Total books: 35
+Downloaded: 0
+Skipped (already exists): 35
+Failed: 0
+Pending: 0
+Current book: All books already exist!
