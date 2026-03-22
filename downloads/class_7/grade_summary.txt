@@ -1,0 +1,7 @@
+Grade Summary: class_7
+Total books: 30
+Downloaded: 30
+Skipped (already exists): 0
+Failed: 0
+Pending: 0
+Current book: GYANVI-7
