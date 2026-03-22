@@ -1,0 +1,7 @@
+Grade Summary: class_6
+Total books: 30
+Downloaded: 0
+Skipped (already exists): 30
+Failed: 0
+Pending: 0
+Current book: All books already exist!
