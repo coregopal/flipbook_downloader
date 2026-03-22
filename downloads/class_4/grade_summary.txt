@@ -1,0 +1,7 @@
+Grade Summary: class_4
+Total books: 41
+Downloaded: 40
+Skipped (already exists): 1
+Failed: 0
+Pending: 0
+Current book: GYANVI-4
